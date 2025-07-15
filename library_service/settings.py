@@ -38,8 +38,9 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "api",
+    "books",
     "user",
+    "borrowing",
     "rest_framework",
     "drf_spectacular",
     "debug_toolbar",
@@ -137,8 +138,8 @@ REST_FRAMEWORK = {
 }
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "Theater pet project api",
-    "DESCRIPTION": "api for theater projects",
+    "TITLE": "Theater pet project books",
+    "DESCRIPTION": "books for theater projects",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
 }

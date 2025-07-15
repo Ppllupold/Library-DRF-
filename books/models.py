@@ -4,6 +4,8 @@ from django.core.validators import MinValueValidator
 from django.db import models
 from django.contrib.auth import get_user_model
 
+from borrowing.models import Borrowing
+
 User = get_user_model()
 
 
@@ -24,17 +26,6 @@ class Book(models.Model):
         return self.title
 
 
-class Borrowing(models.Model):
-    borrow_date = models.DateField(auto_now_add=True)
-    expected_return_date = models.DateField()
-    actual_return_date = models.DateField(null=True, blank=True)
-    book = models.ForeignKey(Book, on_delete=models.PROTECT, related_name="borrowings")
-    user = models.ForeignKey(User, on_delete=models.PROTECT, related_name="borrowings")
-
-    def __str__(self):
-        return f"{self.user} borrowed {self.book.title} on {self.borrow_date}"
-
-
 class Payment(models.Model):
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
@@ -51,7 +42,7 @@ class Payment(models.Model):
     type = models.CharField(max_length=10, choices=Type.choices)
 
     borrowing = models.ForeignKey(
-        "Borrowing", on_delete=models.PROTECT, related_name="payments"
+        Borrowing, on_delete=models.PROTECT, related_name="payments"
     )
 
     session_url = models.URLField()
