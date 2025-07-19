@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from borrowing.bot import send_telegram_message
 from borrowing.serializers import BorrowingReadSerializer, BorrowingCreateSerializer
 from borrowing.models import Borrowing
 
@@ -45,7 +46,14 @@ class BorrowingViewSet(
         return BorrowingReadSerializer
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        borrowing = serializer.save(user=self.request.user)
+        message = (
+            f"📚 New borrowing created!\n\n"
+            f"👤 User: {borrowing.user.email}\n"
+            f"📖 Book: {borrowing.book.title}\n"
+            f"📅 Expected return: {borrowing.expected_return_date}"
+        )
+        send_telegram_message(message)
 
 
 class ReturnBorrowingApiView(APIView):

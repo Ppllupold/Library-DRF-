@@ -1,8 +1,6 @@
 from rest_framework import serializers
 
-from books.models import Book
-from borrowing.models import Borrowing
-from user.serializers import UserSerializer
+from books.models import Book, Payment
 
 
 class BookSerializer(serializers.ModelSerializer):
@@ -11,18 +9,27 @@ class BookSerializer(serializers.ModelSerializer):
         fields = ["id", "title", "author", "cover", "inventory", "daily_fee"]
 
 
-class BorrowingSerializer(serializers.ModelSerializer):
-    book = BookSerializer(many=False)
-    user = UserSerializer(many=False, read_only=True)
+class PavementSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Payment
+        fields = ["id", "status", "type", "money_to_pay"]
+
+
+class PaymentDetailSerializer(serializers.ModelSerializer):
+    borrowing = serializers.SerializerMethodField()
 
     class Meta:
-        model = Borrowing
-        fields = ["id", "expected_return_date", "actual_return_date", "book", "user"]
+        model = Payment
+        fields = [
+            "id",
+            "status",
+            "type",
+            "money_to_pay",
+            "session_url",
+            "session_id",
+            "borrowing",
+        ]
 
-    def create(self, validated_data):
-        book = validated_data["book"]
-        if book.inventory <= 0:
-            raise serializers.ValidationError("Book is out of stock.")
-        book.inventory -= 1
-        book.save()
-        return Borrowing.objects.create(**validated_data)
+    def get_borrowing(self, obj):
+        from borrowing.serializers import BorrowingReadSerializer
+        return BorrowingReadSerializer(obj.borrowing).data
