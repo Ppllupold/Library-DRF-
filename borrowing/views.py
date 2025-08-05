@@ -1,11 +1,18 @@
 from datetime import date
 
 from django.shortcuts import get_object_or_404
+from django.urls import reverse
 from rest_framework import viewsets, mixins, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from books.models import Payment
+from books.stripe import (
+    create_stripe_session_for_borrowing,
+    get_success_url,
+    get_cancel_url,
+)
 from borrowing.bot import send_telegram_message
 from borrowing.serializers import BorrowingReadSerializer, BorrowingCreateSerializer
 from borrowing.models import Borrowing
@@ -47,6 +54,19 @@ class BorrowingViewSet(
 
     def perform_create(self, serializer):
         borrowing = serializer.save(user=self.request.user)
+        print(get_success_url(self.request))
+        session = create_stripe_session_for_borrowing(
+            borrowing,
+            success_url=get_success_url(self.request),
+            cancel_url=get_cancel_url(self.request),
+        )
+        Payment.objects.create(
+            type="Payment",
+            borrowing=borrowing,
+            session_id=session.id,
+            session_url=session.url,
+            money_to_pay=session.amount_total / 100,
+        )
         message = (
             f"📚 New borrowing created!\n\n"
             f"👤 User: {borrowing.user.email}\n"

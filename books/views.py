@@ -1,15 +1,16 @@
+from django.urls import reverse
 from rest_framework import viewsets, mixins
 from rest_framework.response import Response
 from rest_framework.views import APIView
+import stripe
 from rest_framework_extensions.mixins import DetailSerializerMixin
 
 from books.models import Book, Payment
 from books.serializers import (
     BookSerializer,
     PaymentDetailSerializer,
-    PavementSerializer,
+    PaymentSerializer,
 )
-from books.stripe import create_checkout_session
 
 WRITE_ACTIONS = ["create", "update", "partial_update", "destroy"]
 
@@ -37,18 +38,30 @@ class PaymentViewSet(
 ):
     queryset = Payment.objects.all()
     serializer_detail_class = PaymentDetailSerializer
-    serializer_class = PavementSerializer
+    serializer_class = PaymentSerializer
 
     # def get_queryset(self):
     #     if self.request.user.is_staff:
     #         return Payment.objects.all()
     #     return Payment.objects.filter(borrowing__user=self.request.user)
 
-class CreateCheckoutSessionView(APIView):
-    def post(self, request):
-        session = create_checkout_session(
-            amount=1000,
-            success_url="https://yourdomain.com/success",
-            cancel_url="https://yourdomain.com/cancel"
+
+class PaymentSuccessView(APIView):
+    def get(self, request):
+        session = stripe.checkout.Session.retrieve(
+            request.query_params.get("session_id")
         )
-        return Response({"sessionId": session.id, "sessionUrl": session.url})
+        if session.payment_status == "paid":
+            payment = Payment.objects.get(session_id=session.id)
+            payment.status = "PAID"
+            payment.save()
+        return Response(
+            {
+                "result": f"session number {session.id} was successfully paid. Thank you for using our service"
+            }
+        )
+
+
+class PaymentCancelView(APIView):
+    def get(self, request):
+        return Response({"result": "You can finish your payment later during 24 hours"})
