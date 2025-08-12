@@ -1,8 +1,8 @@
 from datetime import date
 
-from django.shortcuts import get_object_or_404
-from django.urls import reverse
+from django.shortcuts import get_object_or_404, redirect
 from rest_framework import viewsets, mixins, status
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -14,8 +14,8 @@ from books.stripe import (
     get_cancel_url,
 )
 from borrowing.bot import send_telegram_message
-from borrowing.serializers import BorrowingReadSerializer, BorrowingCreateSerializer
 from borrowing.models import Borrowing
+from borrowing.serializers import BorrowingReadSerializer, BorrowingCreateSerializer
 
 
 class BorrowingViewSet(
@@ -53,8 +53,13 @@ class BorrowingViewSet(
         return BorrowingReadSerializer
 
     def perform_create(self, serializer):
+        if Payment.objects.filter(
+                borrowing__user=self.request.user,
+                status=Payment.Status.PENDING
+        ).exists():
+            raise ValidationError("You have pending payments. Please complete them before borrowing new books.")
+
         borrowing = serializer.save(user=self.request.user)
-        print(get_success_url(self.request))
         session = create_stripe_session_for_borrowing(
             borrowing,
             success_url=get_success_url(self.request),
@@ -94,10 +99,30 @@ class ReturnBorrowingApiView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        payment = None
+
         borrowing.actual_return_date = date.today()
+        if borrowing.expected_return_date < borrowing.actual_return_date:
+            session = create_stripe_session_for_borrowing(
+                borrowing=borrowing,
+                success_url=get_success_url(request),
+                cancel_url=get_cancel_url(request),
+                fine=True,
+            )
+            payment = Payment.objects.create(
+                borrowing=borrowing,
+                type="Fine",
+                session_id=session.id,
+                session_url=session.url,
+                money_to_pay=session.amount_total / 100,
+            )
+
         borrowing.book.inventory += 1
         borrowing.book.save()
         borrowing.save()
+
+        if payment:
+            return redirect("books:payment-detail", pk=payment.id)
 
         return Response(
             {"detail": f"Book '{borrowing.book.title}' returned successfully."},
