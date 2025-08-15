@@ -1,10 +1,11 @@
 import stripe
 from django.shortcuts import get_object_or_404
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_extensions.mixins import DetailSerializerMixin
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from books.models import Book, Payment
 from books.serializers import (
@@ -20,16 +21,16 @@ WRITE_ACTIONS = ["create", "update", "partial_update", "destroy"]
 class BookViewSet(viewsets.ModelViewSet):
     queryset = Book.objects.all()
     serializer_class = BookSerializer
-    # authentication_classes = (JWTAuthentication,)
-    #
-    # def get_permissions(self):
-    #     if self.action in WRITE_ACTIONS:
-    #         permission_classes = [permissions.IsAdminUser]
-    #     elif self.action == "retrieve":
-    #         permission_classes = [permissions.IsAuthenticated]
-    #     else:
-    #         permission_classes = [permissions.AllowAny]
-    #     return [permission() for permission in permission_classes]
+    authentication_classes = (JWTAuthentication,)
+
+    def get_permissions(self):
+        if self.action in WRITE_ACTIONS:
+            permission_classes = [permissions.IsAdminUser]
+        elif self.action == "retrieve":
+            permission_classes = [permissions.IsAuthenticated]
+        else:
+            permission_classes = [permissions.AllowAny]
+        return [permission() for permission in permission_classes]
 
 
 class PaymentViewSet(DetailSerializerMixin, viewsets.ModelViewSet):
@@ -38,11 +39,11 @@ class PaymentViewSet(DetailSerializerMixin, viewsets.ModelViewSet):
     serializer_detail_class = PaymentDetailSerializer
     permission_classes = [IsAuthenticated]
 
-    # def get_queryset(self):
-    #     user = self.request.user
-    #     if user.is_staff:
-    #         return self.queryset
-    #     return self.queryset.filter(borrowing__user=user)
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff:
+            return self.queryset
+        return self.queryset.filter(borrowing__user=user)
 
     @action(detail=True, methods=["post"], url_path="renew")
     def renew(self, request, pk=None):
