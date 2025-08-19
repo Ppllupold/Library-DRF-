@@ -54,10 +54,11 @@ class BorrowingViewSet(
 
     def perform_create(self, serializer):
         if Payment.objects.filter(
-                borrowing__user=self.request.user,
-                status=Payment.Status.PENDING
+            borrowing__user=self.request.user, status=Payment.Status.PENDING
         ).exists():
-            raise ValidationError("You have pending payments. Please complete them before borrowing new books.")
+            raise ValidationError(
+                "You have pending payments. Please complete them before borrowing new books."
+            )
 
         borrowing = serializer.save(user=self.request.user)
         session = create_stripe_session_for_borrowing(

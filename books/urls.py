@@ -7,7 +7,7 @@ from books.views import (
 )
 
 router = routers.DefaultRouter()
-router.register("books", BookViewSet)
+router.register("books", BookViewSet, basename="book")
 router.register("payments", PaymentViewSet, basename="payment")
 
 urlpatterns = [

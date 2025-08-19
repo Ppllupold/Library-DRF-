@@ -8,6 +8,7 @@ from rest_framework_extensions.mixins import DetailSerializerMixin
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from books.models import Book, Payment
+from books.permissions import IsAdminOrOwnerReadOnlyRenewOnly
 from books.serializers import (
     BookSerializer,
     PaymentDetailSerializer,
@@ -33,26 +34,28 @@ class BookViewSet(viewsets.ModelViewSet):
         return [permission() for permission in permission_classes]
 
 
-class PaymentViewSet(DetailSerializerMixin, viewsets.ModelViewSet):
+class PaymentViewSet(DetailSerializerMixin, viewsets.ReadOnlyModelViewSet):
     queryset = Payment.objects.select_related("borrowing", "borrowing__user")
     serializer_class = PaymentSerializer
     serializer_detail_class = PaymentDetailSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdminOrOwnerReadOnlyRenewOnly]
+    http_method_names = ["get", "head", "options", "post"]
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_staff:
-            return self.queryset
-        return self.queryset.filter(borrowing__user=user)
+        return (
+            self.queryset
+            if user.is_staff
+            else self.queryset.filter(borrowing__user=user)
+        )
 
     @action(detail=True, methods=["post"], url_path="renew")
     def renew(self, request, pk=None):
         payment = self.get_object()
-
         if payment.status != Payment.Status.EXPIRED:
             return Response(
                 {
-                    "result": "Your payment is not expired, no need to renew the payment session"
+                    "detail": "Your payment is not expired, no need to renew the payment session"
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -76,26 +79,18 @@ class PaymentViewSet(DetailSerializerMixin, viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
-    @action(detail=False, methods=["get"], url_path="success")
-    def success(self, request):
-        session_id = request.query_params.get("session_id")
-        if not session_id:
-            return Response(
-                {"error": "Missing session_id"}, status=status.HTTP_400_BAD_REQUEST
-            )
-
+    @action(detail=True, methods=["get"], url_path="success")
+    def success(self, request, pk=None):
+        payment = self.get_object()
         try:
-            session = stripe.checkout.Session.retrieve(session_id)
+            session = stripe.checkout.Session.retrieve(payment.session_id)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         if session.payment_status == "paid":
-            payment = get_object_or_404(Payment, session_id=session.id)
-
             if payment.status != Payment.Status.PAID:
                 payment.status = Payment.Status.PAID
                 payment.save(update_fields=["status"])
-
             return Response(
                 {"result": f"Session {session.id} was successfully paid. Thank you!"},
                 status=status.HTTP_200_OK,
