@@ -1,11 +1,13 @@
 from datetime import date
 
-from django.shortcuts import get_object_or_404, redirect
+from django.core.exceptions import PermissionDenied
+from django.shortcuts import redirect
 from rest_framework import viewsets, mixins, status
+from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.views import APIView
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from books.models import Payment
 from books.stripe import (
@@ -15,7 +17,7 @@ from books.stripe import (
 )
 from borrowing.bot import send_telegram_message
 from borrowing.models import Borrowing
-from borrowing.serializers import BorrowingReadSerializer, BorrowingCreateSerializer
+from borrowing.serializers import BorrowingCreateSerializer, BorrowingReadSerializer
 
 
 class BorrowingViewSet(
@@ -25,12 +27,16 @@ class BorrowingViewSet(
     mixins.RetrieveModelMixin,
 ):
     permission_classes = (IsAuthenticated,)
+    authentication_classes = (JWTAuthentication,)
     queryset = Borrowing.objects.select_related("book", "user")
 
     def get_queryset(self):
         user = self.request.user
         user_id = self.request.query_params.get("user_id")
         is_active = self.request.query_params.get("is_active")
+
+        if not user.is_staff and user_id is not None:
+            raise PermissionDenied("Filtering by user_id is allowed for staff only.")
 
         if user.is_staff:
             queryset = Borrowing.objects.select_related("book", "user")
@@ -61,13 +67,14 @@ class BorrowingViewSet(
             )
 
         borrowing = serializer.save(user=self.request.user)
+
         session = create_stripe_session_for_borrowing(
             borrowing,
             success_url=get_success_url(self.request),
             cancel_url=get_cancel_url(self.request),
         )
         Payment.objects.create(
-            type="Payment",
+            type=Payment.Type.PAYMENT,
             borrowing=borrowing,
             session_id=session.id,
             session_url=session.url,
@@ -81,12 +88,9 @@ class BorrowingViewSet(
         )
         send_telegram_message(message)
 
-
-class ReturnBorrowingApiView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, pk):
-        borrowing = get_object_or_404(Borrowing, pk=pk)
+    @action(detail=True, methods=["post"], url_path="return", url_name="return")
+    def return_borrowing(self, request, pk=None):
+        borrowing = self.get_object()
 
         if not request.user.is_staff and borrowing.user != request.user:
             return Response(
@@ -101,8 +105,8 @@ class ReturnBorrowingApiView(APIView):
             )
 
         payment = None
-
         borrowing.actual_return_date = date.today()
+
         if borrowing.expected_return_date < borrowing.actual_return_date:
             session = create_stripe_session_for_borrowing(
                 borrowing=borrowing,
@@ -112,7 +116,7 @@ class ReturnBorrowingApiView(APIView):
             )
             payment = Payment.objects.create(
                 borrowing=borrowing,
-                type="Fine",
+                type=Payment.Type.FINE,
                 session_id=session.id,
                 session_url=session.url,
                 money_to_pay=session.amount_total / 100,
@@ -120,7 +124,7 @@ class ReturnBorrowingApiView(APIView):
 
         borrowing.book.inventory += 1
         borrowing.book.save()
-        borrowing.save()
+        borrowing.save(update_fields=["actual_return_date"])
 
         if payment:
             return redirect("books:payment-detail", pk=payment.id)
