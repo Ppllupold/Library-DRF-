@@ -2,6 +2,14 @@ from datetime import date
 
 from django.core.exceptions import PermissionDenied
 from django.shortcuts import redirect
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import (
+    extend_schema,
+    OpenApiExample,
+    OpenApiResponse,
+    OpenApiParameter,
+    extend_schema_view,
+)
 from rest_framework import viewsets, mixins, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -20,6 +28,105 @@ from borrowing.models import Borrowing
 from borrowing.serializers import BorrowingCreateSerializer, BorrowingReadSerializer
 
 
+@extend_schema_view(
+    list=extend_schema(
+        summary="List borrowings",
+        description=(
+            "• For regular users, only their own borrowings are returned.\n"
+            "• For staff users, borrowings can be filtered by `user_id`.\n"
+            "• Use `is_active=true|false` to filter by active/returned borrowings."
+        ),
+        parameters=[
+            OpenApiParameter(
+                name="user_id",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Filter borrowings by user (available to staff only).",
+            ),
+            OpenApiParameter(
+                name="is_active",
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="`true` — only active (not returned) borrowings, `false` — only returned.",
+            ),
+        ],
+        responses={
+            200: BorrowingReadSerializer(many=True),
+            401: OpenApiResponse(description="Unauthorized"),
+            403: OpenApiResponse(
+                description="Forbidden (non-staff attempted to filter by user_id)"
+            ),
+        },
+        examples=[
+            OpenApiExample(
+                "Active borrowings of current user",
+                value={
+                    "results": [
+                        {
+                            "id": 12,
+                            "expected_return_date": "2025-09-10",
+                            "actual_return_date": None,
+                            "book": {
+                                "id": 3,
+                                "title": "Clean Architecture",
+                                "inventory": 2,
+                                "daily_fee": "1.50",
+                            },
+                            "user": 7,
+                            "payments": [],
+                        }
+                    ]
+                },
+            )
+        ],
+        tags=["Borrowings"],
+    ),
+    retrieve=extend_schema(
+        summary="Retrieve borrowing details",
+        responses={
+            200: BorrowingReadSerializer,
+            401: OpenApiResponse(description="Unauthorized"),
+            404: OpenApiResponse(description="Not found"),
+        },
+        tags=["Borrowings"],
+    ),
+    create=extend_schema(
+        summary="Create a borrowing",
+        description=(
+            "Creates a new borrowing for the current user. "
+            "A pending `Payment` is also created and a Telegram message is sent. "
+            "If the user already has pending payments, a 400 error is returned."
+        ),
+        request=BorrowingCreateSerializer,
+        responses={
+            201: BorrowingCreateSerializer,
+            400: OpenApiResponse(
+                description="User has pending payments or invalid data"
+            ),
+            401: OpenApiResponse(description="Unauthorized"),
+        },
+        examples=[
+            OpenApiExample(
+                "Example request",
+                request_only=True,
+                value={"book": 3, "expected_return_date": "2025-09-10"},
+            ),
+            OpenApiExample(
+                "Example response",
+                response_only=True,
+                value={
+                    "id": 42,
+                    "expected_return_date": "2025-09-10",
+                    "book": 3,
+                    "payments": [],
+                },
+            ),
+        ],
+        tags=["Borrowings"],
+    ),
+)
 class BorrowingViewSet(
     viewsets.GenericViewSet,
     mixins.CreateModelMixin,
@@ -88,6 +195,35 @@ class BorrowingViewSet(
         )
         send_telegram_message(message)
 
+    @extend_schema(
+        summary="Return a borrowing",
+        description=(
+            "Return a book for a specific borrowing.\n\n"
+            "• Allowed for the borrowing owner or staff.\n"
+            "• If already returned, responds with 400.\n"
+            "• If overdue, a fine `Payment` is created and a redirect to the payment detail endpoint is returned.\n"
+            "• If not overdue, responds with 200 and a success message.\n"
+            "• In all cases, the book inventory is increased by 1."
+        ),
+        responses={
+            200: OpenApiResponse(description="Successful return without fine"),
+            302: OpenApiResponse(description="Redirect to fine payment detail"),
+            400: OpenApiResponse(description="Borrowing already returned"),
+            401: OpenApiResponse(description="Unauthorized"),
+            403: OpenApiResponse(description="Forbidden (not owner and not staff)"),
+            404: OpenApiResponse(
+                description="Borrowing not found (filtered out by queryset)"
+            ),
+        },
+        tags=["Borrowings"],
+        examples=[
+            OpenApiExample(
+                "Successful return without fine",
+                response_only=True,
+                value={"detail": "Book 'Clean Architecture' returned successfully."},
+            )
+        ],
+    )
     @action(detail=True, methods=["post"], url_path="return", url_name="return")
     def return_borrowing(self, request, pk=None):
         borrowing = self.get_object()
